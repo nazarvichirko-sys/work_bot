@@ -1,0 +1,129 @@
+import os
+import uuid
+from flask import Flask, request, jsonify
+import requests
+
+BOT_TOKEN = "8643172698:AAFlLKjA-uRrS2iawjWifCGz5H_JYlS-mcM"
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+app = Flask(__name__)
+
+UPLOAD_DIR = "receipts"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+orders = {}
+
+@app.get("/")
+def home():
+    return "OK"
+
+@app.post("/api/receipt")
+def api_receipt():
+    ref = request.form.get("ref", "").strip()
+    ticket = request.form.get("ticket", "").strip()
+    price = request.form.get("price", "").strip()
+    count = request.form.get("count", "1").strip()
+    name = request.form.get("name", "").strip()
+    phone = request.form.get("phone", "").strip()
+    receipt = request.files.get("receipt")
+
+    if not ref:
+        return jsonify({"ok": False, "error": "no ref"}), 400
+
+    if not ticket or not price or not count or not name or not phone:
+        return jsonify({"ok": False, "error": "missing fields"}), 400
+
+    if not receipt:
+        return jsonify({"ok": False, "error": "no receipt"}), 400
+
+    try:
+        chat_id = int(ref)
+    except:
+        return jsonify({"ok": False, "error": "bad ref"}), 400
+
+    order_id = uuid.uuid4().hex[:10]
+    ext = os.path.splitext(receipt.filename or "")[1].lower() or ".jpg"
+    filepath = os.path.join(UPLOAD_DIR, f"{order_id}{ext}")
+    receipt.save(filepath)
+
+    orders[order_id] = {
+        "status": "pending",
+        "chat_id": chat_id
+    }
+
+    caption = (
+        "🎟 НОВА ПОКУПКА ПО ТВОЇЙ ССИЛЦІ\n\n"
+        f"Квиток: {ticket}\n"
+        f"Кількість: {count}\n"
+        f"Сума: {price} грн\n"
+        f"Ім'я: {name}\n"
+        f"Телефон: +380{phone}\n"
+        f"ID: {order_id}"
+    )
+
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "✅ Прийняти", "callback_data": f"accept_{order_id}"},
+            {"text": "❌ Відхилити", "callback_data": f"decline_{order_id}"}
+        ]]
+    }
+
+    with open(filepath, "rb") as f:
+        response = requests.post(
+            f"{TELEGRAM_API}/sendPhoto",
+            data={
+                "chat_id": chat_id,
+                "caption": caption,
+                "reply_markup": str(keyboard).replace("'", '"')
+            },
+            files={"photo": f}
+        )
+
+    try:
+        result = response.json()
+    except Exception:
+        return jsonify({"ok": False, "error": "telegram response error"}), 500
+
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result}), 500
+
+    return jsonify({"ok": True, "order_id": order_id})
+
+@app.get("/api/status/<order_id>")
+def api_status(order_id):
+    if order_id not in orders:
+        return jsonify({"status": "unknown"})
+    return jsonify({"status": orders[order_id]["status"]})
+
+@app.post("/telegram/webhook")
+def telegram_webhook():
+    update = request.json or {}
+
+    if "callback_query" not in update:
+        return "ok"
+
+    data = update["callback_query"]["data"]
+    callback_id = update["callback_query"]["id"]
+
+    if data.startswith("accept_"):
+        order_id = data.replace("accept_", "")
+        if order_id in orders:
+            orders[order_id]["status"] = "accepted"
+
+    if data.startswith("decline_"):
+        order_id = data.replace("decline_", "")
+        if order_id in orders:
+            orders[order_id]["status"] = "declined"
+
+    requests.post(
+        f"{TELEGRAM_API}/answerCallbackQuery",
+        json={
+            "callback_query_id": callback_id,
+            "text": "Статус оновлено"
+        }
+    )
+
+    return "ok"
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5050, debug=True)
