@@ -3,7 +3,8 @@ import uuid
 from flask import Flask, request, jsonify
 import requests
 
-BOT_TOKEN = "8643172698:AAFlLKjA-uRrS2iawjWifCGz5H_JYlS-mcM"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8643172698:AAFlLKjA-uRrS2iawjWifCGz5H_JYlS-mcM")
+SITE_URL = "https://stend.netlify.app/"  # <-- заміни на свій сайт
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
@@ -79,11 +80,7 @@ def api_receipt():
             files={"photo": f}
         )
 
-    try:
-        result = response.json()
-    except Exception:
-        return jsonify({"ok": False, "error": "telegram response error"}), 500
-
+    result = response.json()
     if not result.get("ok"):
         return jsonify({"ok": False, "error": result}), 500
 
@@ -99,31 +96,59 @@ def api_status(order_id):
 def telegram_webhook():
     update = request.json or {}
 
-    if "callback_query" not in update:
+    # 1) Обробка /start
+    if "message" in update:
+        message = update["message"]
+        text = message.get("text", "")
+        chat_id = message["chat"]["id"]
+
+        if text.startswith("/start"):
+            personal_link = f"{SITE_URL}/?ref={chat_id}"
+            reply_text = (
+                "Твоя особиста ссилка на сайт:\n\n"
+                f"{personal_link}\n\n"
+                "Надішли її іншій людині.\n"
+                "Якщо вона купить квиток через цю ссилку, заявка прийде тобі."
+            )
+
+            requests.post(
+                f"{TELEGRAM_API}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": reply_text
+                }
+            )
+
         return "ok"
 
-    data = update["callback_query"]["data"]
-    callback_id = update["callback_query"]["id"]
+    # 2) Обробка кнопок
+    if "callback_query" in update:
+        callback = update["callback_query"]
+        data = callback.get("data", "")
+        callback_id = callback.get("id")
 
-    if data.startswith("accept_"):
-        order_id = data.replace("accept_", "")
-        if order_id in orders:
-            orders[order_id]["status"] = "accepted"
+        if data.startswith("accept_"):
+            order_id = data.replace("accept_", "")
+            if order_id in orders:
+                orders[order_id]["status"] = "accepted"
 
-    if data.startswith("decline_"):
-        order_id = data.replace("decline_", "")
-        if order_id in orders:
-            orders[order_id]["status"] = "declined"
+        elif data.startswith("decline_"):
+            order_id = data.replace("decline_", "")
+            if order_id in orders:
+                orders[order_id]["status"] = "declined"
 
-    requests.post(
-        f"{TELEGRAM_API}/answerCallbackQuery",
-        json={
-            "callback_query_id": callback_id,
-            "text": "Статус оновлено"
-        }
-    )
+        requests.post(
+            f"{TELEGRAM_API}/answerCallbackQuery",
+            json={
+                "callback_query_id": callback_id,
+                "text": "Статус оновлено"
+            }
+        )
+
+        return "ok"
 
     return "ok"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5050, debug=True)
+    port = int(os.environ.get("PORT", 5050))
+    app.run(host="0.0.0.0", port=port)
