@@ -5,7 +5,7 @@ from flask_cors import CORS
 import requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ТУТ_ТВІЙ_ТОКЕН")
-SITE_URL = "https://stend.netlify.app"
+SITE_URL = "https://stend.netlify.app/"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
