@@ -4,8 +4,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8643172698:AAFlLKjA-uRrS2iawjWifCGz5H_JYlS-mcM")
-SITE_URL = "https://stend.netlify.app/"  # <-- заміни на свій сайт
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ТУТ_ТВІЙ_ТОКЕН")
+SITE_URL = "https://stend.netlify.app"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
@@ -45,13 +45,21 @@ def api_receipt():
         return jsonify({"ok": False, "error": "bad ref"}), 400
 
     order_id = uuid.uuid4().hex[:10]
+    ticket_code = uuid.uuid4().hex[:8].upper()
+
     ext = os.path.splitext(receipt.filename or "")[1].lower() or ".jpg"
     filepath = os.path.join(UPLOAD_DIR, f"{order_id}{ext}")
     receipt.save(filepath)
 
     orders[order_id] = {
         "status": "pending",
-        "chat_id": chat_id
+        "chat_id": chat_id,
+        "ticket": ticket,
+        "price": price,
+        "count": count,
+        "name": name,
+        "phone": phone,
+        "ticket_code": ticket_code
     }
 
     caption = (
@@ -92,13 +100,29 @@ def api_receipt():
 def api_status(order_id):
     if order_id not in orders:
         return jsonify({"status": "unknown"})
-    return jsonify({"status": orders[order_id]["status"]})
+
+    order = orders[order_id]
+
+    return jsonify({
+        "status": order["status"],
+        "ticket": {
+            "event": "Стендап вечір у Харкові",
+            "date": "7 березня 2026",
+            "time": "20:00",
+            "address": "Холодногірська вулиця, 11",
+            "type": order["ticket"],
+            "count": order["count"],
+            "price": order["price"],
+            "name": order["name"],
+            "phone": f"+380{order['phone']}",
+            "code": order["ticket_code"]
+        }
+    })
 
 @app.post("/telegram/webhook")
 def telegram_webhook():
     update = request.json or {}
 
-    # 1) Обробка /start
     if "message" in update:
         message = update["message"]
         text = message.get("text", "")
@@ -123,7 +147,6 @@ def telegram_webhook():
 
         return "ok"
 
-    # 2) Обробка кнопок
     if "callback_query" in update:
         callback = update["callback_query"]
         data = callback.get("data", "")
